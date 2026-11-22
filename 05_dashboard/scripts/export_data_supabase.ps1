@@ -2,12 +2,14 @@
 # ({cats, brands, names, p, d, rs}) nên dashboard_v2_template.html không phải sửa.
 # Cần các view trong supabase_views.sql và file .env (xem .env.example).
 . (Join-Path $PSScriptRoot "supabase_client.ps1")
-$cfg = Read-DotEnv (Join-Path $PSScriptRoot ".env")
-$outFile = Join-Path $PSScriptRoot "data.json"
+$dashDir = Split-Path $PSScriptRoot -Parent
+$cfg = Read-DotEnv (Join-Path $dashDir ".env")
+$outFile = Join-Path $dashDir "data.json"
 $inv = [System.Globalization.CultureInfo]::InvariantCulture
 $VOUCHER = 11312                                   # luôn loại Voucher (như bản CSV)
-$dFrom = if ($cfg.DAILY_FROM) { $cfg.DAILY_FROM } else { '2026-10-18' }
-$dTo   = if ($cfg.DAILY_TO)   { $cfg.DAILY_TO }   else { '2026-10-21' }
+# Cửa sổ ngày (nếu không khai báo, mặc định lấy động theo 30 ngày gần nhất đến ngày hiện tại)
+$dFrom = if ($cfg.DAILY_FROM) { $cfg.DAILY_FROM } else { (Get-Date).AddDays(-30).ToString('yyyy-MM-dd') }
+$dTo   = if ($cfg.DAILY_TO)   { $cfg.DAILY_TO }   else { (Get-Date).ToString('yyyy-MM-dd') }
 
 # --- Sản phẩm ---
 $prod = Get-SupabaseRows $cfg 'vw_dash_product' "select=*&category_id=neq.$VOUCHER&order=product_id"
@@ -50,12 +52,9 @@ try {
 # (dữ liệu đã thu về nhưng chưa nạp), dựng chuỗi theo ngày từ CSV. Khi Supabase bắt kịp thì tự dùng lại Supabase.
 if ($useSeries -and $cfg.DAILY_CSV -and (Test-Path $cfg.DAILY_CSV)) {
   try {
-    $csvRes = & (Join-Path $PSScriptRoot 'daily_series_from_csv.ps1') -Csv $cfg.DAILY_CSV -PidIdx $pidIdx -Pids ([string[]]$mvPids) -D0 ([datetime]$d0.Substring(0, 10)) -CurrentNd $nDays
-    if ($csvRes) {
-      $DY = New-Object System.Text.StringBuilder; [void]$DY.Append($csvRes.Dy)
-      $ddJson = '{"d0":"' + $d0.Substring(0, 10) + '","n":' + $csvRes.Nd + '}'
-      Write-Host "[CSV] Chuỗi theo ngày dài hơn Supabase ($($csvRes.Nd) so với $nDays ngày): dùng dữ liệu từ CSV cho phần chuỗi ngày."
-      $nDays = $csvRes.Nd
+    $scriptDaily = Join-Path $PSScriptRoot 'export_daily_series.py'
+    if (Test-Path $scriptDaily) {
+      python $scriptDaily
     }
   } catch { Write-Warning "Bỏ qua chuỗi ngày từ CSV: $($_.Exception.Message)" }
 }

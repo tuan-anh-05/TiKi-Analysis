@@ -367,8 +367,8 @@ table.hm { border-collapse: separate; border-spacing: 5px; }
 <script>
 /* =====================================================================
    1. NẠP DỮ LIỆU (đã loại Voucher)
-   p: [danh mục, nhóm người bán, giá, đã bán, điểm, lượt đánh giá, thương hiệu, năm lên sàn] × 41.983 SP
-   d: [chỉ số SP, % giảm giá 21/10, lượt bán tăng 18→21/10 (-1 = thiếu), hết hàng] × SP có giá hằng ngày
+   p: [danh mục, nhóm người bán, giá, đã bán, điểm, lượt đánh giá, thương hiệu, năm lên sàn] × SP
+   d: [chỉ số SP, % giảm giá ngày mới nhất, lượt bán tăng trong kỳ (-1 = thiếu), hết hàng] × SP có giá hằng ngày
    ===================================================================== */
 const RAW = JSON.parse(document.getElementById('data').textContent);
 const GROUPS = ['Tiki Trading', 'Gian hàng chính hãng', 'Người bán thông thường'];
@@ -408,6 +408,7 @@ if (HAS_SERIES) for (let k = 0; k < RAW.dy.length; k += ND + 1) {
 }
 const HAS_ASP = Array.isArray(RAW.asp) && RAW.asp.length > 0;
 if (HAS_ASP) for (let k = 0; k < RAW.asp.length; k += 9) ALL[RAW.asp[k]].as = RAW.asp.slice(k + 1, k + 9);
+const lastDateTxt = HAS_SERIES ? dayTxt(ND - 1, true) : new Date().toLocaleDateString('vi-VN');
 
 /* =====================================================================
    2. TRẠNG THÁI & TIỆN ÍCH
@@ -450,7 +451,7 @@ function filtered() {
 /* ---------- khối giao diện dùng chung ---------- */
 const ICON_BULB = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>';
 const ICON_WARN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>';
-const head = (eyebrow, h, p, neg) => `<div class="phead ${neg ? 'neg' : ''}"><div class="eyebrow">${eyebrow}</div><h1>${h}</h1></div>`;
+const head = (eyebrow, h, p, neg) => `<div class="phead ${neg ? 'neg' : ''}"><div style="display:flex;align-items:center;gap:10px;margin-bottom:2px"><span class="eyebrow">${eyebrow}</span><span style="font-size:11.5px;font-weight:600;color:var(--muted);background:var(--line-2);padding:2px 10px;border-radius:12px;display:inline-flex;align-items:center;gap:4px">📅 Cập nhật: <b style="color:var(--ink)">${lastDateTxt}</b></span></div><h1>${h}</h1></div>`;
 const kpiRow = items => `<div class="kpis">${items.map(([l, v, n, bad]) => `<div class="kpi ${bad ? 'bad' : ''}"><span class="l">${l}</span><span class="v">${v}</span><span class="n">${n || ''}</span></div>`).join('')}</div>`;
 const insight = (title, items, neg) => `<div class="insight ${neg ? 'neg' : ''}"><div class="ic">${neg ? ICON_WARN : ICON_BULB}</div><h3>${title}</h3><ul>${items.map(t => `<li>${t}</li>`).join('')}</ul></div>`;
 const card = (title, tagHtml, body, cls = '') => `<section class="card ${cls}"><div class="ct"><h2>${title}</h2>${tagHtml || ''}</div>${body}</section>`;
@@ -725,7 +726,7 @@ function reviewRatingHeat(arr) {
 // Cần file review_stars.csv (product_id, rating, n) xuất từ bảng fact_review trên Supabase.
 function starDist(arr) {
   if (!HAS_STARS) return `<div class="empty">Cần dữ liệu từng lượt đánh giá (1★–5★) từ Supabase.<br>
-    Đặt file <b>review_stars.csv</b> vào thư mục dashboard_mockup rồi chạy lại build.ps1.</div>`;
+    Đặt file <b>review_stars.csv</b> vào thư mục 05_dashboard rồi chạy lại build.ps1.</div>`;
   const c = [0, 0, 0, 0, 0];
   for (const x of arr) if (x.st) for (let i = 0; i < 5; i++) c[i] += x.st[i];
   const tot = c.reduce((a, b) => a + b, 0);
@@ -903,7 +904,7 @@ function pageReview(arr) {
     : card('Nhóm vấn đề khách hàng phản ánh', tag('Chưa có dữ liệu', 'wait'),
         `<div class="hb">${ASPECTS.map(a => `<div class="hr" style="grid-template-columns:150px minmax(0,1fr)"><span class="lb">${a}</span><span class="tr"><span class="bar" style="width:60%;background:var(--line-2)"></span><span class="vs">—</span></span></div>`).join('')}</div>`);
 
-  return head('03 · Đánh giá', 'Vấn đề cần khắc phục', 'Tập trung vào những điểm chưa tốt: sản phẩm, danh mục, nhóm người bán và thương hiệu đang bị khách hàng chấm điểm thấp.', true) +
+  return head('03 · Đánh giá', 'Vấn đề cần khắc phục', 'Tập trung vào những điểm chưa tốt: sản phẩm, danh mục, nhóm người bán và thương hiệu đang bị khách hàng chấm điểm thấp.') +
     kpiRow([['Sản phẩm có điểm TB < 4★', pct(lowP), fmt(low.length) + ' sản phẩm có đánh giá', true], ['Bán chạy nhưng điểm thấp', fmt(hot.length), 'từ 10 đánh giá, điểm TB < 4★', true],
             ['Chưa có đánh giá', pct((arr.length - rated.length) / (arr.length || 1) * 100), 'sản phẩm', true],
             ['Điểm TB sản phẩm', fmt(wRating(arr), 2) + ' ★'], ['Lượt đánh giá', fmt(sumBy(arr, x => x.n))]]) +
@@ -1050,10 +1051,10 @@ function pageTrend(arr) {
         { h: 'Còn lại', f: e => `<span class="days">${e.left === 0 ? 'Hôm nay' : e.left + ' ngày'}</span>`, r: 1 },
         { h: 'Việc cần làm', f: e => e.left <= 7 ? 'Bật mã giảm giá' : e.left <= 30 ? 'Kiểm tra tồn kho' : 'Lên kế hoạch nhập hàng' }], EVENTS))}
     </div>` +
-    card('Sản phẩm mới lên sàn theo năm', '', vcols(years.map(y => ({ l: String(y.y), v: y.n, t: fmt(y.n / 1000, 1) + 'k', cls: y.n === maxY ? 'hi' : '' })), maxY, 120) + '<span class="note">2026: đến tháng 10</span>');
+    card('Sản phẩm mới lên sàn theo năm', '', vcols(years.map(y => ({ l: String(y.y), v: y.n, t: fmt(y.n / 1000, 1) + 'k', cls: y.n === maxY ? 'hi' : '' })), maxY, 120) + '<span class="note">Năm 2026: cập nhật đến ngày mới nhất</span>');
 }
 
-// Phương án dự phòng khi chưa có chuỗi theo ngày: dùng cửa sổ cố định 18–21/10 như trước
+// Phương án dự phòng khi chưa có chuỗi theo ngày: dùng dữ liệu gần nhất
 function pageTrendLegacy(arr) {
   const ds = discountStats(arr);
   const maxSell = Math.max(...ds.bands.map(b => b.sellP), 1);
@@ -1072,19 +1073,19 @@ function pageTrendLegacy(arr) {
     kpiRow([['Lượt bán mỗi ngày', ds.valid.length ? '≈ ' + fmt(ds.perDay) : '—'], ['Đang giảm giá', ds.d.length ? pct(ds.discP) : '—', 'sản phẩm'],
             ['Mức giảm trung bình', ds.d.length ? pct(ds.discAvg) : '—', 'sản phẩm có giảm giá'], ['Hết hàng', ds.d.length ? pct(ds.oosP) : '—', 'sản phẩm', ds.oosP > 2],
             ['Mốc khuyến mãi gần nhất', EVENTS[0] ? (EVENTS[0].left === 0 ? 'Hôm nay' : 'Còn ' + EVENTS[0].left + ' ngày') : '—', EVENTS[0] ? EVENTS[0].e : '']]) +
-    card('Mức giảm giá và tỷ lệ sản phẩm bán ra', tag('Dữ liệu giá 18–21/10/2026'), ds.valid.length ?
+    card('Mức giảm giá và tỷ lệ sản phẩm bán ra', tag('Dữ liệu giá gần nhất'), ds.valid.length ?
       `<div class="par"><div class="stat"><span class="big">× ${fmt(best.sellP / (b0 || 1), 1)}</span><span class="s">tỷ lệ bán ra khi giảm ${best.l} so với không giảm giá</span></div>
        <div>${vcols(ds.bands.map(b => ({ l: b.l, v: b.sellP, t: pct(b.sellP), cls: b.sellP >= maxSell * 0.85 ? 'hi' : '' })), maxSell, 110)}</div></div>`
       : '<div class="empty">Danh mục đang chọn chưa có dữ liệu giá hằng ngày</div>') +
     `<div class="grid2">
-      ${card('Lượt bán mỗi ngày theo danh mục', '', catRows.length ? `<div style="margin:-4px 0 8px;font-size:11.5px;color:var(--muted)">Lượt bán mỗi ngày và tỷ lệ sản phẩm đang giảm giá của danh mục</div>` + hbars(catRows.map(c => ({ label: c.name, v: c.dl, t: fmt(c.dl / 3), s: pct(c.disc / c.n * 100, 0), click: c.c })), catRows[0].dl, { lw: 150 }) : '<div class="empty">Không có dữ liệu</div>')}
+      ${card('Lượt bán mỗi ngày theo danh mục', '', catRows.length ? `<div style="margin:-4px 0 8px;font-size:11.5px;color:var(--muted)">Lượt bán mỗi ngày và tỷ lệ sản phẩm đang giảm giá của danh mục</div>` + hbars(catRows.map(c => ({ label: c.name, v: c.dl, t: fmt(c.dl), s: pct(c.disc / c.n * 100, 0), click: c.c })), catRows[0].dl, { lw: 150 }) : '<div class="empty">Không có dữ liệu</div>')}
       ${card('Lịch khuyến mãi sắp tới', tag('Cần chuẩn bị'), table([
         { h: 'Ngày', f: e => e.d.toLocaleDateString('vi-VN') }, { h: 'Sự kiện', f: e => e.e },
         { h: 'Còn lại', f: e => `<span class="days">${e.left === 0 ? 'Hôm nay' : e.left + ' ngày'}</span>`, r: 1 },
         { h: 'Việc cần làm', f: e => e.left <= 7 ? 'Bật mã giảm giá' : e.left <= 30 ? 'Kiểm tra tồn kho' : 'Lên kế hoạch nhập hàng' }], EVENTS))}
     </div>
     <div class="grid2">
-      ${card('Sản phẩm mới lên sàn theo năm', '', vcols(years.map(y => ({ l: String(y.y), v: y.n, t: fmt(y.n / 1000, 1) + 'k', cls: y.n === maxY ? 'hi' : '' })), maxY, 120) + '<span class="note">2026: đến tháng 10</span>')}
+      ${card('Sản phẩm mới lên sàn theo năm', '', vcols(years.map(y => ({ l: String(y.y), v: y.n, t: fmt(y.n / 1000, 1) + 'k', cls: y.n === maxY ? 'hi' : '' })), maxY, 120) + '<span class="note">Năm 2026: cập nhật đến ngày mới nhất</span>')}
       ${card('Mùa vụ và mức tăng ngày 11/11', tag('Chưa có dữ liệu', 'wait'), '<div class="empty">Chưa đủ dữ liệu theo mùa vụ để phân tích.</div>')}
     </div>`;
 }
@@ -1095,6 +1096,8 @@ function pageTrendLegacy(arr) {
 const RENDER = { ov: pageOverview, mk: pageMarket, bh: pageBehavior, rv: pageReview, tr: pageTrend };
 
 function initFilters() {
+  const footEl = document.querySelector('.foot');
+  if (footEl) footEl.innerHTML = `Tiki.vn · Cập nhật ngày <b>${lastDateTxt}</b> · Không gồm Voucher`;
   const order = RAW.cats.map((n, i) => [n, i]).sort((a, b) => a[0].localeCompare(b[0], 'vi'));
   document.getElementById('fCat').innerHTML = '<option value="-1">Tất cả danh mục</option>' + order.map(([n, i]) => `<option value="${i}">${esc(n)}</option>`).join('');
   document.getElementById('fGrp').innerHTML = '<option value="-1">Tất cả</option>' + GROUPS.map((g, i) => `<option value="${i}">${g}</option>`).join('');

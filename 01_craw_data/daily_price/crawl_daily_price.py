@@ -39,14 +39,14 @@ LOG_FILE = PRICE_DIR / "crawl_daily_log.csv"
 # ==================================================
 # 1. CẤU HÌNH
 # ==================================================
-MAX_WORKERS = 4
+MAX_WORKERS = 3
 MAX_RETRIES = 2
 SAVE_EVERY = 30
 BATCH_SIZE = 120
 TIMEOUT = 20
 REQUEST_DELAY = (0.5, 1.5)
 
-MAX_STAGES = 5          # tổng số lượt crawl (1 lượt chính + 4 lượt thử lại)
+MAX_STAGES = 3          # tổng số lượt crawl (1 lượt chính + 2 lượt thử lại)
 RETRY_SLEEP = 5         # giây nghỉ cơ bản giữa các lượt (nhân theo số lượt)
 
 COLUMNS = [

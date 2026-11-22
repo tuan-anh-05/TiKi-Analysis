@@ -7,10 +7,10 @@ $dir = $PSScriptRoot
 
 if (Test-Path (Join-Path $dir ".env")) {
   Write-Host "1/2  Đang xuất dữ liệu từ Supabase..."
-  & (Join-Path $dir "export_data_supabase.ps1")
+  & (Join-Path $dir "scripts\export_data_supabase.ps1")
 } else {
   Write-Host "1/2  Đang xuất dữ liệu từ CSV (không có .env)..."
-  & (Join-Path $dir "export_data.ps1")
+  & (Join-Path $dir "scripts\export_data.ps1")
 }
 
 Write-Host "2/2  Đang ghép dữ liệu vào giao diện..."

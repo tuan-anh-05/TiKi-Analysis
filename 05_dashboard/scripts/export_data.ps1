@@ -1,6 +1,8 @@
 ﻿# Xuất dữ liệu gọn (đã loại Voucher) để nhúng vào dashboard.html
-$base = "C:\Users\Admin\Downloads\BC_TTTN\TiKi-Analysic-main\02_process_raw_data"
-$outFile = Join-Path $PSScriptRoot "data.json"
+$dashDir = Split-Path $PSScriptRoot -Parent
+$rootDir = Split-Path $dashDir -Parent
+$base = Join-Path $rootDir "02_process_raw_data"
+$outFile = Join-Path $dashDir "data.json"
 $inv = [System.Globalization.CultureInfo]::InvariantCulture
 
 # Danh mục
@@ -38,12 +40,24 @@ foreach ($r in (Import-Csv "$base\product\product_detail.csv")) {
   $pidIdx[$r.product_id] = $i; $i++
 }
 
-# Giá hằng ngày 18 → 21/10
-$a = @{}; $z = @{}
+# Giá hằng ngày (dự phòng khi chưa có chuỗi theo ngày): tự động lấy ngày đầu và ngày mới nhất từ dữ liệu
+$allDates = @{}
+$dailyRows = New-Object System.Collections.ArrayList
 foreach ($r in (Import-Csv "$base\daily_price\daily_price_history.csv")) {
   if ($r.category_id -eq '11312') { continue }
+  $allDates[$r.crawl_date] = 1
+  [void]$dailyRows.Add($r)
+}
+$sortedDates = @($allDates.Keys | Sort-Object)
+$dFirst = if ($sortedDates.Count -gt 0) { $sortedDates[0] } else { '' }
+$dLatest = if ($sortedDates.Count -gt 0) { $sortedDates[-1] } else { '' }
+
+$a = @{}; $z = @{}
+foreach ($r in $dailyRows) {
   $k = "$($r.product_id)_$($r.seller_product_id)"
-  if ($r.crawl_date -eq '2026-10-18') { $a[$k] = $r } elseif ($r.crawl_date -eq '2026-10-21') { $z[$k] = $r } }
+  if ($r.crawl_date -eq $dFirst) { $a[$k] = $r }
+  if ($r.crawl_date -eq $dLatest) { $z[$k] = $r }
+}
 $D = New-Object System.Text.StringBuilder; $seen = @{}
 foreach ($k in $z.Keys) {
   $r = $z[$k]; if (-not $pidIdx.ContainsKey($r.product_id) -or $seen.ContainsKey($r.product_id)) { continue }
@@ -58,7 +72,14 @@ foreach ($k in $z.Keys) {
 # Số sao thật của từng lượt đánh giá (tuỳ chọn): review_stars.csv gồm product_id, rating, n
 # xuất từ Supabase:  SELECT product_id, rating, COUNT(*) AS n FROM fact_review GROUP BY product_id, rating;
 $RS = New-Object System.Text.StringBuilder; $rsProducts = 0
-$rsFile = Join-Path $PSScriptRoot "review_stars.csv"
+$rsFile = Join-Path $dashDir "review_stars.csv"
+if (-not (Test-Path $rsFile)) {
+  $revCsv = Join-Path $base "review\product_review.csv"
+  if (Test-Path $revCsv) {
+    Write-Host "Đang tự động trích xuất review_stars.csv từ dữ liệu review..."
+    python -c "import pandas as pd; df = pd.read_csv(r'$revCsv', usecols=['review_id', 'product_id', 'rating']).dropna(subset=['product_id', 'rating']).drop_duplicates(subset=['review_id', 'product_id']); stars = df.groupby(['product_id', 'rating']).size().reset_index(name='n'); stars.to_csv(r'$rsFile', index=False)"
+  }
+}
 if (Test-Path $rsFile) {
   $acc = @{}
   foreach ($r in (Import-Csv $rsFile)) {
@@ -79,4 +100,11 @@ $json = '{"cats":' + (ConvertTo-Json @($cats) -Compress) +
         ',"d":[' + $D.ToString().TrimEnd(',') + ']' +
         ',"rs":[' + $RS.ToString().TrimEnd(',') + ']}'
 [System.IO.File]::WriteAllText($outFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+
+$pyDaily = Join-Path $PSScriptRoot "export_daily_series.py"
+if (Test-Path $pyDaily) {
+  Write-Host "Đang tự động cập nhật chuỗi thời gian theo ngày ($dFirst -> $dLatest)..."
+  python $pyDaily
+}
+
 "products=$i cats=$($cats.Count) brands=$($brands.Count) daily=$($seen.Count) review_stars=$rsProducts size=$([math]::Round((Get-Item $outFile).Length/1MB,2))MB"

@@ -4,3 +4,5 @@
 # Tệp sinh ra khi dựng dashboard
 data.json
 dashboard_v2.html
+review_stars.csv
+update_log.txt
