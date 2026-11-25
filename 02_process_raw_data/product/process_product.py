@@ -20,15 +20,26 @@ def get_project_dir() -> Path:
 
 
 def filter_current_month(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only rows whose crawl_date belongs to the month this script runs."""
+    """Keep only rows whose crawl_date belongs to the month this script runs.
+
+    If running manually outside Airflow (no TIKI_RUN_DATE) and current month has
+    no data, automatically falls back to the latest month present in the dataset.
+    """
+    df["crawl_date"] = df["crawl_date"].astype(str).str.strip().str[:7]
     run_date = os.environ.get("TIKI_RUN_DATE")
     if run_date:
-        current_month = datetime.strptime(run_date, "%Y-%m-%d").strftime("%Y-%m")
+        target_month = datetime.strptime(run_date, "%Y-%m-%d").strftime("%Y-%m")
     else:
-        current_month = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%Y-%m")
-    df["crawl_date"] = df["crawl_date"].astype(str).str.strip().str[:7]
-    filtered = df.loc[df["crawl_date"] == current_month].copy()
-    print(f"  ✓ Lọc crawl_date tháng {current_month}: giữ {len(filtered):,}/{len(df):,} dòng")
+        target_month = datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).strftime("%Y-%m")
+        if not (df["crawl_date"] == target_month).any() and not df.empty:
+            valid_months = df["crawl_date"].loc[df["crawl_date"].str.match(r"^\d{4}-\d{2}$")].dropna()
+            if not valid_months.empty:
+                latest_month = valid_months.max()
+                print(f"  [INFO] Tháng hiện tại ({target_month}) chưa có dữ liệu; tự động dùng tháng mới nhất: {latest_month}")
+                target_month = latest_month
+
+    filtered = df.loc[df["crawl_date"] == target_month].copy()
+    print(f"  ✓ Lọc crawl_date tháng {target_month}: giữ {len(filtered):,}/{len(df):,} dòng")
     return filtered
 
 

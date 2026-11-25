@@ -8,6 +8,7 @@ Crawl danh mục và danh mục con từ Tiki.
 from pathlib import Path
 from urllib.parse import urlparse
 import os
+import sys
 import re
 import time
 
@@ -23,6 +24,15 @@ if not (PROJECT_DIR / "01_craw_data").is_dir():
         if (parent / "01_craw_data").is_dir():
             PROJECT_DIR = parent
             break
+
+if str(PROJECT_DIR / "01_craw_data") not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR / "01_craw_data"))
+
+try:
+    from proxy_manager import configure_session, rotate_ip
+except ImportError:
+    def configure_session(s): return s
+    def rotate_ip(*args, **kwargs): return None
 
 DATA_ROOT = Path(os.environ.get("TIKI_DATA_DIR", PROJECT_DIR)).resolve()
 CATEGORIES_DIR = DATA_ROOT / "01_craw_data" / "category"
@@ -48,6 +58,7 @@ HEADERS = {
 # ==================================================
 def crawl_categories():
     with requests.Session() as session:
+        configure_session(session)
         session.headers.update(HEADERS)
         response = session.get(MENU_URL, params={"platform": "desktop"}, timeout=30)
         response.raise_for_status()
@@ -102,6 +113,14 @@ def get_children(session, parent_id):
             params={"include": "children", "parent_id": parent_id},
             timeout=20,
         )
+        if response.status_code in (403, 429):
+            print(f"[CATEGORY] HTTP {response.status_code} tại category_id={parent_id}, tiến hành xoay IP WARP...")
+            rotate_ip()
+            response = session.get(
+                CATEGORY_URL,
+                params={"include": "children", "parent_id": parent_id},
+                timeout=20,
+            )
         response.raise_for_status()
         data = response.json()
         return data.get("data", data.get("children", []))

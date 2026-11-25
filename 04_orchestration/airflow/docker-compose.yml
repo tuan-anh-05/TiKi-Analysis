@@ -29,6 +29,25 @@ services:
       - ./minio.license:/minio.license:ro
     restart: unless-stopped
 
+  warp:
+    build:
+      context: ../warp
+    image: tiki-warp:local
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      - WARP_PORT=1080
+      - API_PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   airflow-init:
     build:
       context: .
@@ -54,6 +73,8 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-tiki-lake}
       SUPABASE_DB_URL: ${SUPABASE_DB_URL:?Set SUPABASE_DB_URL in .env}
       TIKI_PROJECT_DIR: /opt/tiki/project
+      WARP_PROXY_URL: ${WARP_PROXY_URL:-socks5h://warp:1080}
+      WARP_CONTROL_URL: ${WARP_CONTROL_URL:-http://warp:8000}
     volumes:
       - ../..:/opt/tiki/project
     entrypoint: /bin/bash
@@ -73,6 +94,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_started
+      warp:
+        condition: service_healthy
     environment: *airflow-environment
     volumes:
       - ../..:/opt/tiki/project
@@ -88,6 +111,8 @@ services:
         condition: service_completed_successfully
       minio:
         condition: service_started
+      warp:
+        condition: service_healthy
     environment: *airflow-environment
     volumes:
       - ../..:/opt/tiki/project

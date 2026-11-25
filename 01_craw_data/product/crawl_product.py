@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import sys
+import subprocess
 import time
 import random
 import requests
@@ -15,6 +16,15 @@ if not (PROJECT_DIR / "01_craw_data").is_dir():
             break
     else:
         raise FileNotFoundError("Không tìm thấy thư mục 01_craw_data")
+
+if str(PROJECT_DIR / "01_craw_data") not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR / "01_craw_data"))
+
+try:
+    from proxy_manager import configure_session, rotate_ip
+except ImportError:
+    def configure_session(s): return s
+    def rotate_ip(*args, **kwargs): return None
 
 DATA_ROOT = Path(os.environ.get("TIKI_DATA_DIR", PROJECT_DIR)).resolve()
 DATA_DIR = DATA_ROOT / "01_craw_data" / "product"
@@ -41,6 +51,7 @@ else:
 CRAWL_DATE = CRAWL_TIMESTAMP.strftime("%Y-%m")
 
 session = requests.Session()
+configure_session(session)
 session.headers.update({
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -75,10 +86,11 @@ def fetch_listing(params, retries=3):
         try:
             response = session.get(LISTING_URL, params=params, timeout=30)
 
-            # 429: bị giới hạn tần suất; chờ lâu hơn trước khi thử lại.
-            if response.status_code == 429:
+            # 429 / 403: bị giới hạn tần suất hoặc chặn IP; đổi IP WARP và chờ trước khi thử lại.
+            if response.status_code in (403, 429):
                 wait = min(15 * attempt, 60)
-                last_error = RuntimeError(f"HTTP 429 Too Many Requests; chờ {wait}s")
+                last_error = RuntimeError(f"HTTP {response.status_code}; xoay IP và chờ {wait}s")
+                rotate_ip()
                 if attempt < retries:
                     time.sleep(wait)
                     continue
@@ -124,7 +136,12 @@ def crawl_product_ids():
     sau đó dedupe theo product_id, seller_product_id, category_id, crawl_date.
     """
     if not CATEGORIES_FILE.exists():
-        raise FileNotFoundError(f"Không tìm thấy file danh mục: {CATEGORIES_FILE}")
+        cat_script = PROJECT_DIR / "01_craw_data" / "category" / "crawl_category.py"
+        if cat_script.exists():
+            print(f"[BOOTSTRAP] Chưa có {CATEGORIES_FILE.name}, tự động kích hoạt crawl_category.py...")
+            subprocess.run([sys.executable, str(cat_script)], cwd=PROJECT_DIR, check=True)
+        else:
+            raise FileNotFoundError(f"Không tìm thấy file danh mục: {CATEGORIES_FILE}")
 
     categories = pd.read_csv(
         CATEGORIES_FILE,
@@ -336,8 +353,15 @@ def get_product_detail(product_id, seller_product_id):
         try:
             response = session.get(url, params=params, timeout=30)
 
-            if response.status_code in (401, 403, 429):
-                print(f"API trả HTTP {response.status_code}. Dừng crawl để tránh gửi thêm request.")
+            if response.status_code in (403, 429):
+                print(f"API trả HTTP {response.status_code}. Tiến hành xoay IP WARP...")
+                rotate_ip()
+                if attempt < MAX_RETRIES:
+                    continue
+                return None, "stop"
+
+            if response.status_code == 401:
+                print(f"API trả HTTP 401. Dừng crawl để tránh gửi thêm request.")
                 return None, "stop"
 
             response.raise_for_status()

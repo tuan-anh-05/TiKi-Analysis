@@ -38,6 +38,17 @@ def find_project_dir() -> Path:
     raise FileNotFoundError("Không tìm thấy thư mục 01_craw_data")
 
 
+PROJECT_DIR = find_project_dir()
+if str(PROJECT_DIR / "01_craw_data") not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR / "01_craw_data"))
+
+try:
+    from proxy_manager import configure_session, rotate_ip
+except ImportError:
+    def configure_session(s): return s
+    def rotate_ip(*args, **kwargs): return None
+
+
 def normalize_key_value(value) -> str:
     if pd.isna(value):
         return ""
@@ -137,6 +148,7 @@ def load_products_to_crawl(detail_file: Path, seller_file: Path, review_file: Pa
 
 def create_session() -> requests.Session:
     session = requests.Session()
+    configure_session(session)
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -153,9 +165,16 @@ def fetch_reviews_page(session: requests.Session, params: dict) -> tuple[dict | 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = session.get(API_URL, params=params, timeout=TIMEOUT)
-            if response.status_code in (401, 403):
+            if response.status_code in (403, 429):
+                print(f"[REVIEW] HTTP {response.status_code}. Tiến hành xoay IP WARP...")
+                rotate_ip()
+                if attempt < MAX_RETRIES:
+                    time.sleep(5 * attempt)
+                    continue
                 return None, "stop"
-            if response.status_code == 429 or response.status_code >= 500:
+            if response.status_code == 401:
+                return None, "stop"
+            if response.status_code >= 500:
                 time.sleep(10 * attempt)
                 continue
             response.raise_for_status()

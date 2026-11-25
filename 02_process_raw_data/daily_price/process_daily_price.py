@@ -29,7 +29,7 @@ def clean_daily_price_history(input_file: Path, output_file: Path) -> pd.DataFra
     id_cols = ["product_id", "seller_product_id", "category_id"]
     for col in id_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
-
+        
     # seller_id có thể thiếu (null) -> ép kiểu Int64
     df["seller_id"] = pd.to_numeric(df["seller_id"], errors="coerce").astype("Int64")
 
@@ -44,6 +44,7 @@ def clean_daily_price_history(input_file: Path, output_file: Path) -> pd.DataFra
     df = df.dropna(subset=id_cols + ["crawl_date"])
     for col in id_cols:
         df[col] = df[col].astype("int64")
+
     print("Phân bố sau lọc:")
     print(df["crawl_date"].value_counts(dropna=False).sort_index())
     print(f"Số dòng sau lọc: {len(df):,}")

@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.vscode/
 
 # Local Airflow / MinIO secrets, metadata, and runtime logs
 04_orchestration/airflow/.env

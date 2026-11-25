@@ -39,7 +39,7 @@ def main():
     for pid_val in df_pd["product_id"].dropna():
         pid = str(int(pid_val))
         cid = prod_cat.get(pid)
-        if cid == "11312" or not cid:
+        if not cid:
             continue
         if pid in seen:
             continue
@@ -53,7 +53,6 @@ def main():
         "product_id", "seller_product_id", "category_id", "crawl_date",
         "discount_rate", "all_time_quantity_sold", "inventory_status"
     ])
-    df_d = df_d[df_d["category_id"] != 11312]
     df_d["product_id"] = df_d["product_id"].dropna().astype(int).astype(str)
     df_d = df_d[df_d["product_id"].isin(pid_to_idx)]
 

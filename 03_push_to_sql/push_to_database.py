@@ -20,7 +20,7 @@ import psycopg2
 import sys
 import time
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -126,6 +126,31 @@ def keep_rows_missing_from_database(
     keys = [normalized_key(row) for row in df[key_columns].itertuples(index=False, name=None)]
     is_new = [key not in existing_keys for key in keys]
     return df.loc[is_new].copy(), [key for key, keep in zip(keys, is_new) if keep]
+
+
+def refresh_dashboard_materialized_views(engine, log_file):
+    """Làm mới các Materialized Views của Dashboard sau khi nạp dữ liệu mới."""
+    views = [
+        "mv_dash_review_stars",
+        "mv_dash_review_aspect",
+        "mv_dash_daily_series",
+    ]
+    log_msg(log_file, "\n[MATERIALIZED VIEWS] Kiểm tra và làm mới các view cho Dashboard...")
+    with engine.connect() as conn:
+        for view in views:
+            try:
+                check_sql = text("SELECT 1 FROM pg_matviews WHERE schemaname = 'public' AND matviewname = :v")
+                exists = conn.execute(check_sql, {"v": view}).fetchone()
+                if exists:
+                    log_msg(log_file, f"  -> Đang REFRESH MATERIALIZED VIEW: {view}...")
+                    conn.execution_options(isolation_level="AUTOCOMMIT").execute(
+                        text(f'REFRESH MATERIALIZED VIEW public."{view}";')
+                    )
+                    log_msg(log_file, f"  ✓ Đã làm mới [{view}] thành công.")
+                else:
+                    log_msg(log_file, f"  - [{view}]: chưa được khởi tạo trên Supabase (bỏ qua).")
+            except Exception as exc:
+                log_msg(log_file, f"  ⚠️ Không thể làm mới [{view}]: {exc}")
 
 
 def push_incremental_postgres(project_dir: Path, data_root: Path, db_url: str, log_file: Path):
@@ -340,6 +365,10 @@ def push_incremental_postgres(project_dir: Path, data_root: Path, db_url: str, l
         conn.commit()
 
     save_checkpoint(checkpoint_file, cp)
+
+    # Nếu có dữ liệu mới được chèn, làm mới các Materialized Views của Dashboard
+    if total_new_rows > 0:
+        refresh_dashboard_materialized_views(engine, log_file)
 
     total_time = time.time() - start_total
     log_msg(log_file, "=" * 60)

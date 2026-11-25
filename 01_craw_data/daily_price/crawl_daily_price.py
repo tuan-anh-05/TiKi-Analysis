@@ -7,6 +7,7 @@ Chạy tối đa MAX_STAGES lượt (1 lượt chính + các lượt thử lại
 # %% Cell 1
 from pathlib import Path
 import os
+import sys
 from datetime import datetime
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,6 +26,15 @@ if not (PROJECT_DIR / "01_craw_data").is_dir():
         if (parent / "01_craw_data").is_dir():
             PROJECT_DIR = parent
             break
+
+if str(PROJECT_DIR / "01_craw_data") not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR / "01_craw_data"))
+
+try:
+    from proxy_manager import configure_session, rotate_ip
+except ImportError:
+    def configure_session(s): return s
+    def rotate_ip(*args, **kwargs): return None
 
 DATA_ROOT = Path(os.environ.get("TIKI_DATA_DIR", PROJECT_DIR)).resolve()
 PRICE_DIR = DATA_ROOT / "01_craw_data" / "daily_price"
@@ -149,7 +159,7 @@ thread_local = threading.local()
 
 def get_session():
     if not hasattr(thread_local, "session"):
-        thread_local.session = requests.Session()
+        thread_local.session = configure_session(requests.Session())
     return thread_local.session
 
 # ==================================================
@@ -184,11 +194,12 @@ def crawl_product(row):
             if status in (404, 410):
                 return None, f"{pid}: HTTP {status}", True
 
-            if status == 429:
+            if status in (403, 429):
+                rotate_ip()
                 if attempt < MAX_RETRIES:
                     time.sleep(10 * attempt)
                     continue
-                return None, f"{pid}: HTTP 429", False
+                return None, f"{pid}: HTTP {status}", False
 
             if 400 <= status < 500:
                 return None, f"{pid}: HTTP {status}", False

@@ -1,15 +1,24 @@
-# Điều Phối Pipeline & Hạ Tầng Tự Động Hóa (Orchestration / Airflow & MinIO)
+# Điều Phối Pipeline & Hạ Tầng Tự Động Hóa (Orchestration / Airflow, MinIO & WARP)
 
-Thư mục này chứa toàn bộ cấu hình hạ tầng container hóa (**Docker Compose**), hệ thống lập lịch & điều phối quy trình tự động (**Apache Airflow 2.10.5**), hệ thống lưu trữ đối tượng dạng hồ dữ liệu (**MinIO S3 Lakehouse**) và tệp adapter đồng bộ dữ liệu thông minh ([`scripts/minio_task.py`](scripts/minio_task.py)).
+Thư mục này chứa toàn bộ cấu hình hạ tầng container hóa (**Docker Compose**), hệ thống lập lịch & điều phối quy trình tự động (**Apache Airflow 2.10.5**), hệ thống lưu trữ đối tượng dạng hồ dữ liệu (**MinIO S3 Lakehouse**), lá chắn proxy chống chặn IP (**Cloudflare WARP Anti-Ban Service**) và adapter đồng bộ dữ liệu thông minh ([`scripts/minio_task.py`](scripts/minio_task.py)).
 
 ---
 
 ## 1. Kiến Trúc Điều Phối Tổng Thể (Orchestration Architecture)
 
-Hệ thống được thiết kế theo mô hình **Dual-DAG Architecture** kết hợp với **Airflow Pool (1 slot)** để giải quyết triệt để vấn đề thời gian crawl lớn (96h - 120h) và ngăn chặn hoàn toàn xung đột tài nguyên (Race Condition) khi ghi dữ liệu lên MinIO và Supabase PostgreSQL:
+Hệ thống được thiết kế theo mô hình **Dual-DAG Architecture** kết hợp với **Airflow Pool (1 slot)** và **WARP Proxy Service** nhằm giải quyết 3 bài toán kỹ thuật trọng tâm:
+1. **Chống nghẽn & Chống chặn IP sàn TMĐT**: Tự động định tuyến traffic cào dữ liệu qua Cloudflare WARP và tự xoay IP khi bị giới hạn tần suất (HTTP 429/403).
+2. **Khắc phục thời gian crawl lớn**: Tách riêng DAG cào tổng thể theo tháng (144h timeout) và DAG cào gia tăng theo ngày.
+3. **Triệt tiêu xung đột tài nguyên (Race Condition)**: Sử dụng Airflow Pool (1 slot) khóa độc quyền các task nạp dữ liệu lên MinIO và Supabase PostgreSQL.
 
 ```mermaid
 flowchart TD
+    subgraph DOCKER_INFRA["Hạ Tầng Docker Stack (docker-compose.yml)"]
+        WARP_SVC["tiki-warp (Cloudflare WARP)<br/>- SOCKS5 Proxy (:1080)<br/>- Rotate API (:8000)<br/>- Cap: NET_ADMIN"]
+        MINIO_SVC["minio (MinIO S3 Lakehouse)<br/>- Port :9000 (S3 API)<br/>- Port :9001 (Web Console)"]
+        DB_SVC["airflow-db (PostgreSQL 16)<br/>Airflow Metadata Storage"]
+    end
+
     subgraph DAG_MONTHLY["DAG 1: tiki_product_monthly (02:00 Ngày 1 Hàng Tháng)"]
         M_Start["Start"] --> M_Crawl["crawl_monthly_product_full<br/>(Quét 100 trang toàn bộ danh mục)<br/>Timeout: 144 Giờ | Retries: 1"]
         M_Crawl --> M_ExtractEnd["extract_complete"]
@@ -27,6 +36,10 @@ flowchart TD
         D_CrawlPrice & D_CrawlReview & D_CrawlProduct --> D_ExtractEnd["extract_complete"]
     end
 
+    %% Kết nối proxy chống ban
+    M_Crawl & D_CrawlPrice & D_CrawlReview & D_CrawlProduct -.->|Gửi request qua socks5h://warp:1080| WARP_SVC
+    WARP_SVC ==>|Traffic mã hóa ra Internet| TikiServer["Tiki Public API"]
+
     subgraph MUTEX_POOL["Khu Vực Khóa Độc Quyền (Airflow Pool: tiki_sync_pool - Dung lượng: 1 Slot)"]
         direction TB
         M_ExtractEnd & D_ExtractEnd --> Transform["run_preprocessing<br/>(Làm sạch & SHA-256 Cache)"]
@@ -35,7 +48,7 @@ flowchart TD
     end
 
     Load --> TargetDB[("Supabase PostgreSQL (Gold)")]
-    Load --> MinIOStorage[("MinIO S3 (Lakehouse)")]
+    Transform & Validate & Load <--> MINIO_SVC
 ```
 
 ---
@@ -61,7 +74,22 @@ Tất cả các mốc thời gian đều được cấu hình theo giờ Việt 
 
 ---
 
-## 3. Cơ Chế MinIO Adapter & Atomic Promotion
+## 3. Các Dịch Vụ Trong Docker Stack (`docker-compose.yml`)
+
+Stack Docker được thiết lập khép kín, tối ưu tài nguyên:
+
+| Service | Image | Vai trò & Cấu hình kỹ thuật |
+|---|---|---|
+| **`warp`** | `tiki-warp:local`<br/>*(Custom build từ `04_orchestration/warp`)* | **Lá chắn chống chặn IP & SOCKS5 Proxy**:<br/>- Khởi tạo daemon `cloudflare-warp` ở chế độ SOCKS5 proxy tại cổng `1080`.<br/>- Cung cấp mini REST API tại cổng `8000` (`POST /rotate`, `GET /status`).<br/>- Cấu hình quyền `cap_add: [NET_ADMIN]` và mount thiết bị `/dev/net/tun`.<br/>- Healthcheck tự động giám sát trạng thái kết nối tới Cloudflare edge. |
+| **`airflow-db`** | `postgres:16` | Cơ sở dữ liệu chuyên biệt lưu trữ metadata, DAG runs, task instances và pools của Airflow. Hoàn toàn tách biệt với Supabase PostgreSQL. |
+| **`minio`** | `quay.io/minio/aistor/minio:latest` | Hệ thống lưu trữ đối tượng tương thích AWS S3. Cung cấp API tại cổng `9000` và giao diện Web Console tại cổng `9001`. |
+| **`airflow-init`** | `tiki-airflow:local`<br/>*(Custom build từ Dockerfile)* | Container khởi tạo: tự động chạy `airflow db migrate`, tạo tài khoản Admin, và thiết lập Airflow Pool `tiki_sync_pool (1 slot)`. |
+| **`airflow-webserver`** | `tiki-airflow:local` | Giao diện quản trị đồ họa Airflow Web UI tại cổng `8080`. Phụ thuộc: `warp` (healthy), `minio` (started), `airflow-init` (completed). |
+| **`airflow-scheduler`** | `tiki-airflow:local` | Trình giám sát và kích hoạt các DAG theo lịch cron. Phụ thuộc: `warp` (healthy), `minio` (started), `airflow-init` (completed). |
+
+---
+
+## 4. Cơ Chế MinIO Adapter & Atomic Promotion
 
 Tệp [`scripts/minio_task.py`](scripts/minio_task.py) đóng vai trò là tầng trung gian (Adapter) giữa thư mục làm việc cục bộ của các container và MinIO S3 Lakehouse:
 
@@ -74,7 +102,7 @@ sequenceDiagram
 
     Note over AF,MinIO: Giai đoạn 1: Chuẩn bị & Thu thập
     AF->>MinIO: Tải dữ liệu current/ liên quan về working copy
-    AF->>Script: Kích hoạt crawler (Bronze)
+    AF->>Script: Kích hoạt crawler (Bronze qua WARP Proxy)
     Script->>AF: Hoàn thành ghi CSV cục bộ
     AF->>MinIO: Upload tệp thay đổi lên current/bronze (Archive bản cũ vào history/)
 
@@ -103,20 +131,6 @@ sequenceDiagram
 1. **Kiểm tra tính toàn vẹn bằng SHA-256**: Chỉ upload tệp khi mã băm nội dung thực sự thay đổi.
 2. **Atomic Staging & Rollback**: Dữ liệu Silver chưa được kiểm định sẽ nằm ở vùng `staging/`. Nếu `validate_silver.py` phát hiện bất kỳ lỗi nào (sai format, duplicate key, rỗng), adapter tự động rollback về trạng thái sạch trước đó và hủy bỏ đợt staging.
 3. **Sao lưu lịch sử đầy đủ (Audit Trail)**: Mỗi khi ghi đè một đối tượng trong `current/`, bản ghi cũ sẽ được copy lưu trữ tại `history/<run_id>/...` phục vụ truy vết và khôi phục khi cần thiết.
-
----
-
-## 4. Các Dịch Vụ Trong Docker Compose (`docker-compose.yml`)
-
-Stack Docker được thiết lập khép kín, tối ưu tài nguyên:
-
-| Service | Image | Vai trò & Cấu hình |
-|---|---|---|
-| **`airflow-db`** | `postgres:16` | Cơ sở dữ liệu chuyên biệt lưu trữ metadata, DAG runs, task instances và pools của Airflow. Hoàn toàn tách biệt với Supabase PostgreSQL. |
-| **`minio`** | `quay.io/minio/aistor/minio:latest` | Hệ thống lưu trữ đối tượng tương thích AWS S3. Cung cấp API tại cổng `9000` và giao diện Web Console tại cổng `9001`. |
-| **`airflow-init`** | `tiki-airflow:local` (Custom build) | Container khởi tạo: tự động chạy `airflow db migrate`, tạo tài khoản Admin, và thiết lập Airflow Pool `tiki_sync_pool (1 slot)`. |
-| **`airflow-webserver`** | `tiki-airflow:local` | Giao diện quản trị đồ họa Airflow Web UI tại cổng `8080`. |
-| **`airflow-scheduler`** | `tiki-airflow:local` | Trình giám sát và kích hoạt các DAG theo lịch cron. |
 
 ---
 
@@ -152,7 +166,7 @@ Mở tệp `.env` và thiết lập các biến môi trường:
 
 ### Bước 3: Khởi động hệ thống Docker
 ```bash
-# 1. Build image tùy chỉnh (kèm các dependency Python)
+# 1. Build image tùy chỉnh (bao gồm tiki-airflow và tiki-warp)
 docker compose build
 
 # 2. Khởi tạo database và pool
@@ -186,7 +200,7 @@ Trên Airflow UI, chọn DAG ➔ nhấn nút **Trigger DAG w/ config** và nhậ
 ```
 
 Các giá trị `task` hợp lệ:
-* `daily_price`: Chỉ chạy luồng crawl giá hàng ngày ➔ transform ➔ validate ➔ load.
+* `daily_price`: Chỉ chạy luồng crawl giá hàng ngày (qua proxy WARP) ➔ transform ➔ validate ➔ load.
 * `product`: Chỉ chạy luồng crawl sản phẩm ➔ transform ➔ validate ➔ load.
 * `review`: Chỉ chạy luồng crawl review ➔ transform ➔ validate ➔ load.
 * `preprocess`: Chạy làm sạch dữ liệu ➔ validate ➔ load.
@@ -202,6 +216,15 @@ docker compose exec airflow-scheduler airflow dags trigger --conf "{\"task\":\"d
 ## 7. Các Lệnh Quản Trị & Khắc Phục Sự Cố Thường Gặp
 
 ```bash
+# Xem log trực tiếp của proxy WARP (kiểm tra trạng thái kết nối & xoay IP)
+docker compose logs -f warp
+
+# Kiểm tra trạng thái IP hiện tại của container WARP
+docker compose exec warp curl -s http://127.0.0.1:8000/status
+
+# Yêu cầu xoay IP thủ công qua API
+docker compose exec warp curl -X POST http://127.0.0.1:8000/rotate
+
 # Xem log trực tiếp của scheduler
 docker compose logs -f airflow-scheduler
 
